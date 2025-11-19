@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Partage de Fichiers Sécurisé</title>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/umd/lucide.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState } = React;
+        const { Upload, Download, Lock, Key, File, CheckCircle, AlertCircle } = lucide;
+
+        // Système de stockage simple avec localStorage
+        window.storage = {
+            async get(key, shared) {
+                const data = localStorage.getItem(key);
+                return data ? { key, value: data, shared } : null;
+            },
+            async set(key, value, shared) {
+                localStorage.setItem(key, value);
+                return { key, value, shared };
+            },
+            async delete(key, shared) {
+                localStorage.removeItem(key);
+                return { key, deleted: true, shared };
+            },
+            async list(prefix, shared) {
+                const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
+                return { keys, prefix, shared };
+            }
+        };
+
+        function SecureFileShare() {
+            const [activeTab, setActiveTab] = useState('upload');
+            const [file, setFile] = useState(null);
+            const [password, setPassword] = useState('');
+            const [uploadCode, setUploadCode] = useState('');
+            const [uploadStatus, setUploadStatus] = useState('');
+            
+            const [downloadCode, setDownloadCode] = useState('');
+            const [downloadPassword, setDownloadPassword] = useState('');
+            const [downloadStatus, setDownloadStatus] = useState('');
+
+            const generateCode = () => {
+                const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+                let code = '';
+                for (let i = 0; i < 6; i++) {
+                    code += chars.charAt(Math.floor(Math.random() * chars.length));
+                }
+                return code;
+            };
+
+            const hashPassword = async (pwd) => {
+                const encoder = new TextEncoder();
+                const data = encoder.encode(pwd);
+                const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+            };
+
+            const fileToBase64 = (file) => {
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(file);
+                });
+            };
+
+            const handleUpload = async () => {
+                if (!file || !password) {
+                    setUploadStatus('error:Veuillez sélectionner un fichier et définir un mot de passe');
+                    return;
+                }
+
+                setUploadStatus('loading');
+                
+                try {
+                    const code = generateCode();
+                    const hashedPassword = await hashPassword(password);
+                    const base64Data = await fileToBase64(file);
+                    
+                    const fileData = {
+                        name: file.name,
+                        type: file.type,
+                        size: file.size,
+                        data: base64Data,
+                        password: hashedPassword,
+                        uploadDate: new Date().toISOString()
+                    };
+
+                    const result = await window.storage.set(`file:${code}`, JSON.stringify(fileData), true);
+                    
+                    if (result) {
+                        setUploadCode(code);
+                        setUploadStatus(`success:Fichier uploadé avec succès!`);
+                        setFile(null);
+                        setPassword('');
+                    } else {
+                        setUploadStatus('error:Erreur lors de l\'upload');
+                    }
+                } catch (error) {
+                    setUploadStatus(`error:${error.message}`);
+                }
+            };
+
+            const handleDownload = async () => {
+                if (!downloadCode || !downloadPassword) {
+                    setDownloadStatus('error:Veuillez entrer le code et le mot de passe');
+                    return;
+                }
+
+                setDownloadStatus('loading');
+
+                try {
+                    const result = await window.storage.get(`file:${downloadCode.toUpperCase()}`, true);
+                    
+                    if (!result) {
+                        setDownloadStatus('error:Code invalide');
+                        return;
+                    }
+
+                    const fileData = JSON.parse(result.value);
+                    const hashedPassword = await hashPassword(downloadPassword);
+
+                    if (hashedPassword !== fileData.password) {
+                        setDownloadStatus('error:Mot de passe incorrect');
+                        return;
+                    }
+
+                    const link = document.createElement('a');
+                    link.href = fileData.data;
+                    link.download = fileData.name;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+
+                    setDownloadStatus(`success:Fichier "${fileData.name}" téléchargé!`);
+                    setDownloadCode('');
+                    setDownloadPassword('');
+                } catch (error) {
+                    setDownloadStatus('error:Code invalide ou fichier introuvable');
+                }
+            };
+
+            const getStatusIcon = (status) => {
+                if (status.startsWith('success')) return React.createElement(CheckCircle, { className: "w-5 h-5 text-green-500" });
+                if (status.startsWith('error')) return React.createElement(AlertCircle, { className: "w-5 h-5 text-red-500" });
+                return null;
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+                    <div className="max-w-2xl mx-auto">
+                        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+                            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white">
+                                <h1 className="text-3xl font-bold flex items-center gap-3">
+                                    {React.createElement(Lock, { className: "w-8 h-8" })}
+                                    Partage de Fichiers Sécurisé
+                                </h1>
+                                <p className="mt-2 opacity-90">Partagez vos fichiers de manière sécurisée avec un code unique</p>
+                            </div>
+
+                            <div className="flex border-b">
+                                <button
+                                    onClick={() => setActiveTab('upload')}
+                                    className={`flex-1 py-4 px-6 font-semibold transition-colors flex items-center justify-center gap-2 ${
+                                        activeTab === 'upload'
+                                            ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                                            : 'text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {React.createElement(Upload, { className: "w-5 h-5" })}
+                                    Envoyer un fichier
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('download')}
+                                    className={`flex-1 py-4 px-6 font-semibold transition-colors flex items-center justify-center gap-2 ${
+                                        activeTab === 'download'
+                                            ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600'
+                                            : 'text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {React.createElement(Download, { className: "w-5 h-5" })}
+                                    Récupérer un fichier
+                                </button>
+                            </div>
+
+                            <div className="p-6">
+                                {activeTab === 'upload' ? (
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                Sélectionner un fichier
+                                            </label>
+                                            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
+                                                <input
+                                                    type="file"
+                                                    onChange={(e) => setFile(e.target.files[0])}
+                                                    className="hidden"
+                                                    id="file-upload"
+                                                />
+                                                <label htmlFor="file-upload" className="cursor-pointer">
+                                                    {React.createElement(File, { className: "w-12 h-12 mx-auto text-gray-400 mb-3" })}
+                                                    {file ? (
+                                                        <p className="text-sm font-medium text-gray-700">{file.name}</p>
+                                                    ) : (
+                                                        <p className="text-sm text-gray-600">Cliquez pour sélectionner un fichier</p>
+                                                    )}
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                Définir un mot de passe
+                                            </label>
+                                            <div className="relative">
+                                                {React.createElement(Lock, { className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" })}
+                                                <input
+                                                    type="password"
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                    placeholder="Mot de passe pour protéger le fichier"
+                                                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            onClick={handleUpload}
+                                            disabled={uploadStatus === 'loading'}
+                                            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {uploadStatus === 'loading' ? 'Upload en cours...' : 'Uploader le fichier'}
+                                        </button>
+
+                                        {uploadStatus && uploadStatus !== 'loading' && (
+                                            <div className={`p-4 rounded-lg flex items-start gap-3 ${
+                                                uploadStatus.startsWith('success') ? 'bg-green-50' : 'bg-red-50'
+                                            }`}>
+                                                {getStatusIcon(uploadStatus)}
+                                                <div className="flex-1">
+                                                    <p className={`font-medium ${
+                                                        uploadStatus.startsWith('success') ? 'text-green-800' : 'text-red-800'
+                                                    }`}>
+                                                        {uploadStatus.split(':')[1]}
+                                                    </p>
+                                                    {uploadCode && (
+                                                        <div className="mt-3 p-3 bg-white rounded border border-green-200">
+                                                            <p className="text-sm text-gray-600 mb-1">Code de partage :</p>
+                                                            <p className="text-2xl font-bold text-gray-900 tracking-wider">{uploadCode}</p>
+                                                            <p className="text-xs text-gray-500 mt-2">Partagez ce code avec le destinataire</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                Code du fichier
+                                            </label>
+                                            <div className="relative">
+                                                {React.createElement(Key, { className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" })}
+                                                <input
+                                                    type="text"
+                                                    value={downloadCode}
+                                                    onChange={(e) => setDownloadCode(e.target.value.toUpperCase())}
+                                                    placeholder="Entrez le code à 6 caractères"
+                                                    maxLength={6}
+                                                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent uppercase tracking-wider font-mono"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                                Mot de passe
+                                            </label>
+                                            <div className="relative">
+                                                {React.createElement(Lock, { className: "absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" })}
+                                                <input
+                                                    type="password"
+                                                    value={downloadPassword}
+                                                    onChange={(e) => setDownloadPassword(e.target.value)}
+                                                    placeholder="Mot de passe du fichier"
+                                                    className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <button
+                                            onClick={handleDownload}
+                                            disabled={downloadStatus === 'loading'}
+                                            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {downloadStatus === 'loading' ? 'Vérification...' : 'Télécharger le fichier'}
+                                        </button>
+
+                                        {downloadStatus && downloadStatus !== 'loading' && (
+                                            <div className={`p-4 rounded-lg flex items-start gap-3 ${
+                                                downloadStatus.startsWith('success') ? 'bg-green-50' : 'bg-red-50'
+                                            }`}>
+                                                {getStatusIcon(downloadStatus)}
+                                                <p className={`font-medium ${
+                                                    downloadStatus.startsWith('success') ? 'text-green-800' : 'text-red-800'
+                                                }`}>
+                                                    {downloadStatus.split(':')[1]}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
+                            <p className="font-semibold mb-2">ℹ️ Comment ça marche ?</p>
+                            <ul className="space-y-1 ml-4">
+                                <li>• Uploadez un fichier et définissez un mot de passe</li>
+                                <li>• Vous recevez un code unique à 6 caractères</li>
+                                <li>• Partagez ce code et le mot de passe avec le destinataire</li>
+                                <li>• Le destinataire peut télécharger le fichier avec ces informations</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.render(React.createElement(SecureFileShare), document.getElementById('root'));
+    </script>
+</body>
+</html>
