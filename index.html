@@ -4,321 +4,552 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Partage de Fichiers Sécurisé</title>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body>
-    <div id="root"></div>
-    
-    <script type="text/babel">
-        const { useState } = React;
-        const { Upload, Download, Lock, Key, File, CheckCircle, AlertCircle } = lucide;
-
-        // Système de stockage avec localStorage
-        window.storage = {
-            async get(key, shared) {
-                try {
-                    const data = localStorage.getItem(key);
-                    return data ? { key, value: data, shared } : null;
-                } catch (e) {
-                    return null;
-                }
-            },
-            async set(key, value, shared) {
-                try {
-                    localStorage.setItem(key, value);
-                    return { key, value, shared };
-                } catch (e) {
-                    return null;
-                }
-            },
-            async delete(key, shared) {
-                try {
-                    localStorage.removeItem(key);
-                    return { key, deleted: true, shared };
-                } catch (e) {
-                    return null;
-                }
-            },
-            async list(prefix, shared) {
-                try {
-                    const keys = Object.keys(localStorage).filter(k => !prefix || k.startsWith(prefix));
-                    return { keys, prefix, shared };
-                } catch (e) {
-                    return { keys: [], prefix, shared };
-                }
-            }
-        };
-
-        function SecureFileShare() {
-            const [activeTab, setActiveTab] = useState('upload');
-            const [file, setFile] = useState(null);
-            const [password, setPassword] = useState('');
-            const [uploadCode, setUploadCode] = useState('');
-            const [uploadStatus, setUploadStatus] = useState('');
-            
-            const [downloadCode, setDownloadCode] = useState('');
-            const [downloadPassword, setDownloadPassword] = useState('');
-            const [downloadStatus, setDownloadStatus] = useState('');
-
-            const generateCode = () => {
-                const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-                let code = '';
-                for (let i = 0; i < 6; i++) {
-                    code += chars.charAt(Math.floor(Math.random() * chars.length));
-                }
-                return code;
-            };
-
-            const hashPassword = async (pwd) => {
-                const encoder = new TextEncoder();
-                const data = encoder.encode(pwd);
-                const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-                const hashArray = Array.from(new Uint8Array(hashBuffer));
-                return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-            };
-
-            const fileToBase64 = (file) => {
-                return new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(file);
-                });
-            };
-
-            const handleUpload = async () => {
-                if (!file || !password) {
-                    setUploadStatus('error:Veuillez sélectionner un fichier et définir un mot de passe');
-                    return;
-                }
-
-                setUploadStatus('loading');
-                
-                try {
-                    const code = generateCode();
-                    const hashedPassword = await hashPassword(password);
-                    const base64Data = await fileToBase64(file);
-                    
-                    const fileData = {
-                        name: file.name,
-                        type: file.type,
-                        size: file.size,
-                        data: base64Data,
-                        password: hashedPassword,
-                        uploadDate: new Date().toISOString()
-                    };
-
-                    const result = await window.storage.set(`file:${code}`, JSON.stringify(fileData), true);
-                    
-                    if (result) {
-                        setUploadCode(code);
-                        setUploadStatus(`success:Fichier uploadé avec succès!`);
-                        setFile(null);
-                        setPassword('');
-                    } else {
-                        setUploadStatus('error:Erreur lors de l\'upload');
-                    }
-                } catch (error) {
-                    setUploadStatus(`error:${error.message}`);
-                }
-            };
-
-            const handleDownload = async () => {
-                if (!downloadCode || !downloadPassword) {
-                    setDownloadStatus('error:Veuillez entrer le code et le mot de passe');
-                    return;
-                }
-
-                setDownloadStatus('loading');
-
-                try {
-                    const result = await window.storage.get(`file:${downloadCode.toUpperCase()}`, true);
-                    
-                    if (!result) {
-                        setDownloadStatus('error:Code invalide');
-                        return;
-                    }
-
-                    const fileData = JSON.parse(result.value);
-                    const hashedPassword = await hashPassword(downloadPassword);
-
-                    if (hashedPassword !== fileData.password) {
-                        setDownloadStatus('error:Mot de passe incorrect');
-                        return;
-                    }
-
-                    const link = document.createElement('a');
-                    link.href = fileData.data;
-                    link.download = fileData.name;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-
-                    setDownloadStatus(`success:Fichier "${fileData.name}" téléchargé!`);
-                    setDownloadCode('');
-                    setDownloadPassword('');
-                } catch (error) {
-                    setDownloadStatus('error:Code invalide ou fichier introuvable');
-                }
-            };
-
-            const getStatusIcon = (status) => {
-                if (status.startsWith('success')) return React.createElement(CheckCircle, { className: "w-5 h-5 text-green-500" });
-                if (status.startsWith('error')) return React.createElement(AlertCircle, { className: "w-5 h-5 text-red-500" });
-                return null;
-            };
-
-            return React.createElement('div', { className: "min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4" },
-                React.createElement('div', { className: "max-w-2xl mx-auto" },
-                    React.createElement('div', { className: "bg-white rounded-2xl shadow-xl overflow-hidden" },
-                        React.createElement('div', { className: "bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white" },
-                            React.createElement('h1', { className: "text-3xl font-bold flex items-center gap-3" },
-                                React.createElement(Lock, { size: 32 }),
-                                "Partage de Fichiers Sécurisé"
-                            ),
-                            React.createElement('p', { className: "mt-2 opacity-90" }, "Partagez vos fichiers de manière sécurisée avec un code unique")
-                        ),
-                        React.createElement('div', { className: "flex border-b" },
-                            React.createElement('button', {
-                                onClick: () => setActiveTab('upload'),
-                                className: `flex-1 py-4 px-6 font-semibold transition-colors flex items-center justify-center gap-2 ${
-                                    activeTab === 'upload' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-600 hover:bg-gray-50'
-                                }`
-                            },
-                                React.createElement(Upload, { size: 20 }),
-                                "Envoyer un fichier"
-                            ),
-                            React.createElement('button', {
-                                onClick: () => setActiveTab('download'),
-                                className: `flex-1 py-4 px-6 font-semibold transition-colors flex items-center justify-center gap-2 ${
-                                    activeTab === 'download' ? 'bg-blue-50 text-blue-600 border-b-2 border-blue-600' : 'text-gray-600 hover:bg-gray-50'
-                                }`
-                            },
-                                React.createElement(Download, { size: 20 }),
-                                "Récupérer un fichier"
-                            )
-                        ),
-                        React.createElement('div', { className: "p-6" },
-                            activeTab === 'upload' ? 
-                                React.createElement('div', { className: "space-y-6" },
-                                    React.createElement('div', null,
-                                        React.createElement('label', { className: "block text-sm font-semibold text-gray-700 mb-2" }, "Sélectionner un fichier"),
-                                        React.createElement('div', { className: "border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors" },
-                                            React.createElement('input', {
-                                                type: "file",
-                                                onChange: (e) => setFile(e.target.files[0]),
-                                                className: "hidden",
-                                                id: "file-upload"
-                                            }),
-                                            React.createElement('label', { htmlFor: "file-upload", className: "cursor-pointer" },
-                                                React.createElement(File, { size: 48, className: "mx-auto text-gray-400 mb-3" }),
-                                                file ? 
-                                                    React.createElement('p', { className: "text-sm font-medium text-gray-700" }, file.name) :
-                                                    React.createElement('p', { className: "text-sm text-gray-600" }, "Cliquez pour sélectionner un fichier")
-                                            )
-                                        )
-                                    ),
-                                    React.createElement('div', null,
-                                        React.createElement('label', { className: "block text-sm font-semibold text-gray-700 mb-2" }, "Définir un mot de passe"),
-                                        React.createElement('div', { className: "relative" },
-                                            React.createElement(Lock, { size: 20, className: "absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" }),
-                                            React.createElement('input', {
-                                                type: "password",
-                                                value: password,
-                                                onChange: (e) => setPassword(e.target.value),
-                                                placeholder: "Mot de passe pour protéger le fichier",
-                                                className: "w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            })
-                                        )
-                                    ),
-                                    React.createElement('button', {
-                                        onClick: handleUpload,
-                                        disabled: uploadStatus === 'loading',
-                                        className: "w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                    },
-                                        uploadStatus === 'loading' ? 'Upload en cours...' : 'Uploader le fichier'
-                                    ),
-                                    uploadStatus && uploadStatus !== 'loading' && React.createElement('div', {
-                                        className: `p-4 rounded-lg flex items-start gap-3 ${uploadStatus.startsWith('success') ? 'bg-green-50' : 'bg-red-50'}`
-                                    },
-                                        getStatusIcon(uploadStatus),
-                                        React.createElement('div', { className: "flex-1" },
-                                            React.createElement('p', {
-                                                className: `font-medium ${uploadStatus.startsWith('success') ? 'text-green-800' : 'text-red-800'}`
-                                            }, uploadStatus.split(':')[1]),
-                                            uploadCode && React.createElement('div', { className: "mt-3 p-3 bg-white rounded border border-green-200" },
-                                                React.createElement('p', { className: "text-sm text-gray-600 mb-1" }, "Code de partage :"),
-                                                React.createElement('p', { className: "text-2xl font-bold text-gray-900 tracking-wider" }, uploadCode),
-                                                React.createElement('p', { className: "text-xs text-gray-500 mt-2" }, "Partagez ce code avec le destinataire")
-                                            )
-                                        )
-                                    )
-                                ) :
-                                React.createElement('div', { className: "space-y-6" },
-                                    React.createElement('div', null,
-                                        React.createElement('label', { className: "block text-sm font-semibold text-gray-700 mb-2" }, "Code du fichier"),
-                                        React.createElement('div', { className: "relative" },
-                                            React.createElement(Key, { size: 20, className: "absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" }),
-                                            React.createElement('input', {
-                                                type: "text",
-                                                value: downloadCode,
-                                                onChange: (e) => setDownloadCode(e.target.value.toUpperCase()),
-                                                placeholder: "Entrez le code à 6 caractères",
-                                                maxLength: 6,
-                                                className: "w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent uppercase tracking-wider font-mono"
-                                            })
-                                        )
-                                    ),
-                                    React.createElement('div', null,
-                                        React.createElement('label', { className: "block text-sm font-semibold text-gray-700 mb-2" }, "Mot de passe"),
-                                        React.createElement('div', { className: "relative" },
-                                            React.createElement(Lock, { size: 20, className: "absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" }),
-                                            React.createElement('input', {
-                                                type: "password",
-                                                value: downloadPassword,
-                                                onChange: (e) => setDownloadPassword(e.target.value),
-                                                placeholder: "Mot de passe du fichier",
-                                                className: "w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                            })
-                                        )
-                                    ),
-                                    React.createElement('button', {
-                                        onClick: handleDownload,
-                                        disabled: downloadStatus === 'loading',
-                                        className: "w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-lg font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                    },
-                                        downloadStatus === 'loading' ? 'Vérification...' : 'Télécharger le fichier'
-                                    ),
-                                    downloadStatus && downloadStatus !== 'loading' && React.createElement('div', {
-                                        className: `p-4 rounded-lg flex items-start gap-3 ${downloadStatus.startsWith('success') ? 'bg-green-50' : 'bg-red-50'}`
-                                    },
-                                        getStatusIcon(downloadStatus),
-                                        React.createElement('p', {
-                                            className: `font-medium ${downloadStatus.startsWith('success') ? 'text-green-800' : 'text-red-800'}`
-                                        }, downloadStatus.split(':')[1])
-                                    )
-                                )
-                        )
-                    ),
-                    React.createElement('div', { className: "mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800" },
-                        React.createElement('p', { className: "font-semibold mb-2" }, "ℹ️ Comment ça marche ?"),
-                        React.createElement('ul', { className: "space-y-1 ml-4" },
-                            React.createElement('li', null, "• Uploadez un fichier et définissez un mot de passe"),
-                            React.createElement('li', null, "• Vous recevez un code unique à 6 caractères"),
-                            React.createElement('li', null, "• Partagez ce code et le mot de passe avec le destinataire"),
-                            React.createElement('li', null, "• Le destinataire peut télécharger le fichier avec ces informations")
-                        )
-                    )
-                )
-            );
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(React.createElement(SecureFileShare));
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            animation: slideIn 0.5s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header p {
+            margin-top: 10px;
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 20px;
+            background: none;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #6b7280;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .tab:hover {
+            background: #f9fafb;
+        }
+
+        .tab.active {
+            color: #667eea;
+            background: #f0f4ff;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            font-size: 14px;
+            color: #374151;
+            margin-bottom: 10px;
+        }
+
+        .file-upload-area {
+            border: 2px dashed #d1d5db;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .file-upload-area:hover {
+            border-color: #667eea;
+            background: #f9fafb;
+        }
+
+        .file-upload-area input[type="file"] {
+            display: none;
+        }
+
+        .file-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+            color: #9ca3af;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #9ca3af;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 15px 15px 15px 45px;
+            border: 2px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        input[type="text"].code-input {
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .alert {
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .alert.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .alert.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .code-display {
+            margin-top: 15px;
+            padding: 15px;
+            background: white;
+            border: 2px solid #d1fae5;
+            border-radius: 10px;
+        }
+
+        .code-display p:first-child {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }
+
+        .code-display .code {
+            font-size: 32px;
+            font-weight: bold;
+            letter-spacing: 4px;
+            color: #111827;
+            font-family: 'Courier New', monospace;
+        }
+
+        .code-display p:last-child {
+            font-size: 11px;
+            color: #6b7280;
+            margin-top: 10px;
+        }
+
+        .info-box {
+            margin-top: 30px;
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 10px;
+            padding: 20px;
+            font-size: 14px;
+            color: #1e40af;
+        }
+
+        .info-box strong {
+            display: block;
+            margin-bottom: 10px;
+        }
+
+        .info-box ul {
+            margin-left: 20px;
+        }
+
+        .info-box li {
+            margin-bottom: 5px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="header">
+                <h1>
+                    🔒 Partage de Fichiers Sécurisé
+                </h1>
+                <p>Partagez vos fichiers de manière sécurisée avec un code unique</p>
+            </div>
+
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('upload')" id="uploadTab">
+                    📤 Envoyer un fichier
+                </button>
+                <button class="tab" onclick="switchTab('download')" id="downloadTab">
+                    📥 Récupérer un fichier
+                </button>
+            </div>
+
+            <div class="content">
+                <!-- UPLOAD SECTION -->
+                <div id="uploadSection">
+                    <div class="form-group">
+                        <label>Sélectionner un fichier</label>
+                        <div class="file-upload-area" onclick="document.getElementById('fileInput').click()">
+                            <input type="file" id="fileInput" onchange="handleFileSelect(this)">
+                            <div class="file-icon">📄</div>
+                            <p id="fileName" style="font-size: 14px; color: #6b7280;">Cliquez pour sélectionner un fichier</p>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Définir un mot de passe</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔒</span>
+                            <input type="password" id="uploadPassword" placeholder="Mot de passe pour protéger le fichier">
+                        </div>
+                    </div>
+
+                    <button class="btn" onclick="uploadFile()" id="uploadBtn">
+                        Uploader le fichier
+                    </button>
+
+                    <div id="uploadAlert" class="hidden"></div>
+                </div>
+
+                <!-- DOWNLOAD SECTION -->
+                <div id="downloadSection" class="hidden">
+                    <div class="form-group">
+                        <label>Code du fichier</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔑</span>
+                            <input type="text" id="downloadCode" placeholder="CODE6" maxlength="6" class="code-input">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Mot de passe</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔒</span>
+                            <input type="password" id="downloadPassword" placeholder="Mot de passe du fichier">
+                        </div>
+                    </div>
+
+                    <button class="btn" onclick="downloadFile()" id="downloadBtn">
+                        Télécharger le fichier
+                    </button>
+
+                    <div id="downloadAlert" class="hidden"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="info-box">
+            <strong>ℹ️ Comment ça marche ?</strong>
+            <ul>
+                <li>Uploadez un fichier et définissez un mot de passe</li>
+                <li>Vous recevez un code unique à 6 caractères</li>
+                <li>Partagez ce code et le mot de passe avec le destinataire</li>
+                <li>Le destinataire peut télécharger le fichier avec ces informations</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let selectedFile = null;
+
+        function switchTab(tab) {
+            const uploadTab = document.getElementById('uploadTab');
+            const downloadTab = document.getElementById('downloadTab');
+            const uploadSection = document.getElementById('uploadSection');
+            const downloadSection = document.getElementById('downloadSection');
+
+            if (tab === 'upload') {
+                uploadTab.classList.add('active');
+                downloadTab.classList.remove('active');
+                uploadSection.classList.remove('hidden');
+                downloadSection.classList.add('hidden');
+            } else {
+                downloadTab.classList.add('active');
+                uploadTab.classList.remove('active');
+                downloadSection.classList.remove('hidden');
+                uploadSection.classList.add('hidden');
+            }
+        }
+
+        function handleFileSelect(input) {
+            const file = input.files[0];
+            if (file) {
+                selectedFile = file;
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('fileName').style.fontWeight = '600';
+                document.getElementById('fileName').style.color = '#374151';
+            }
+        }
+
+        function generateCode() {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            let code = '';
+            for (let i = 0; i < 6; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        async function hashPassword(password) {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(password);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function uploadFile() {
+            const password = document.getElementById('uploadPassword').value;
+            const uploadBtn = document.getElementById('uploadBtn');
+            const uploadAlert = document.getElementById('uploadAlert');
+
+            if (!selectedFile || !password) {
+                showAlert('uploadAlert', 'error', 'Veuillez sélectionner un fichier et définir un mot de passe');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            uploadBtn.innerHTML = '<span class="spinner"></span>Upload en cours...';
+
+            try {
+                const code = generateCode();
+                const hashedPassword = await hashPassword(password);
+                const base64Data = await fileToBase64(selectedFile);
+
+                const fileData = {
+                    name: selectedFile.name,
+                    type: selectedFile.type,
+                    size: selectedFile.size,
+                    data: base64Data,
+                    password: hashedPassword,
+                    uploadDate: new Date().toISOString()
+                };
+
+                localStorage.setItem(`file:${code}`, JSON.stringify(fileData));
+
+                showAlert('uploadAlert', 'success', 
+                    `Fichier uploadé avec succès!
+                    <div class="code-display">
+                        <p>Code de partage :</p>
+                        <div class="code">${code}</div>
+                        <p>Partagez ce code avec le destinataire</p>
+                    </div>`
+                );
+
+                selectedFile = null;
+                document.getElementById('fileInput').value = '';
+                document.getElementById('fileName').textContent = 'Cliquez pour sélectionner un fichier';
+                document.getElementById('fileName').style.fontWeight = 'normal';
+                document.getElementById('fileName').style.color = '#6b7280';
+                document.getElementById('uploadPassword').value = '';
+
+            } catch (error) {
+                showAlert('uploadAlert', 'error', 'Erreur lors de l\'upload: ' + error.message);
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Uploader le fichier';
+            }
+        }
+
+        async function downloadFile() {
+            const code = document.getElementById('downloadCode').value.toUpperCase();
+            const password = document.getElementById('downloadPassword').value;
+            const downloadBtn = document.getElementById('downloadBtn');
+
+            if (!code || !password) {
+                showAlert('downloadAlert', 'error', 'Veuillez entrer le code et le mot de passe');
+                return;
+            }
+
+            downloadBtn.disabled = true;
+            downloadBtn.innerHTML = '<span class="spinner"></span>Vérification...';
+
+            try {
+                const fileDataStr = localStorage.getItem(`file:${code}`);
+
+                if (!fileDataStr) {
+                    showAlert('downloadAlert', 'error', 'Code invalide');
+                    downloadBtn.disabled = false;
+                    downloadBtn.textContent = 'Télécharger le fichier';
+                    return;
+                }
+
+                const fileData = JSON.parse(fileDataStr);
+                const hashedPassword = await hashPassword(password);
+
+                if (hashedPassword !== fileData.password) {
+                    showAlert('downloadAlert', 'error', 'Mot de passe incorrect');
+                    downloadBtn.disabled = false;
+                    downloadBtn.textContent = 'Télécharger le fichier';
+                    return;
+                }
+
+                const link = document.createElement('a');
+                link.href = fileData.data;
+                link.download = fileData.name;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+                showAlert('downloadAlert', 'success', `Fichier "${fileData.name}" téléchargé avec succès!`);
+
+                document.getElementById('downloadCode').value = '';
+                document.getElementById('downloadPassword').value = '';
+
+            } catch (error) {
+                showAlert('downloadAlert', 'error', 'Erreur: Code invalide ou fichier introuvable');
+            } finally {
+                downloadBtn.disabled = false;
+                downloadBtn.textContent = 'Télécharger le fichier';
+            }
+        }
+
+        function showAlert(elementId, type, message) {
+            const alert = document.getElementById(elementId);
+            alert.className = `alert ${type}`;
+            alert.innerHTML = `
+                <div>${type === 'success' ? '✅' : '❌'}</div>
+                <div style="flex: 1;">${message}</div>
+            `;
+            alert.classList.remove('hidden');
+        }
+
+        // Auto-uppercase pour le code
+        document.getElementById('downloadCode').addEventListener('input', function(e) {
+            this.value = this.value.toUpperCase();
+        });
     </script>
 </body>
 </html>
